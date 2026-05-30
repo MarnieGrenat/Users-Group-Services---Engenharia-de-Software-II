@@ -1,0 +1,996 @@
+openapi: 3.0.3
+info:
+  title: User & Group Service API
+  description: |
+    API REST do **User & Group Service**, microsserviço responsável por
+    armazenar e gerenciar informações de usuários, grupos e suas associações
+    (memberships) dentro do sistema.
+
+    ### Dependências
+    - **Dependências de Leitura:** Report Service, Survey Application
+    - **Dependência Direta:** Assessment Service
+
+    ### Observações de Integração
+    - Este serviço é **backend-only**: não é exposto publicamente.
+    - Consumido apenas pelos serviços listados em *Dependências*.
+    - O `userId` é originado pelo Autorizador (emissor do JWT no edge dos
+      consumidores) e propagado a este serviço via cabeçalho `X-User-Id`.
+      Este serviço **não valida JWT** diretamente.
+    - O `groupId` é obtido através do endpoint de listagem de grupos
+      (`GET /v1/group`).
+
+    ### Arquitetura
+    - Linguagem: **Python**
+    - Estilo: **API REST**
+    - Persistência: **PostgreSQL (relacional)**
+
+    ### Modelo de Acesso
+    Segurança em duas camadas:
+    - **Transporte:** mTLS entre serviços, gerenciado pela infraestrutura
+      (service mesh) — fora do escopo deste contrato.
+    - **Aplicação:** todo request deve incluir os cabeçalhos `X-Service-Id`
+      (identificando o serviço chamador) e `X-User-Id` (identidade do
+      usuário final em nome de quem a chamada é feita). Detalhes em
+      *Security Schemes*.
+
+    Política de permissões por serviço:
+
+    | Serviço              | `X-Service-Id`         | Permissão        |
+    |----------------------|------------------------|------------------|
+    | Assessment Service   | `assessment-service`   | CRUD completo    |
+    | Report Service       | `report-service`       | Somente leitura  |
+    | Survey Application   | `survey-application`   | Somente leitura  |
+
+    Tentativas de escrita por serviços somente-leitura são rejeitadas
+    com `403 Forbidden` (`errorCode: READ_ONLY_SERVICE`).
+
+    ### Convenções de Erro
+    Todas as respostas de erro seguem o schema `Erro`, inspirado na
+    RFC 7807 (*Problem Details for HTTP APIs*), com `timestamp`, `status`
+    HTTP, `errorCode` aplicacional estável, `message`, `path` e, quando
+    aplicável, `details[]` enumerando os campos que falharam na validação.
+
+    ### Convenções de Concorrência
+    Recursos retornam o cabeçalho `ETag`. Operações de atualização e remoção
+    aceitam o cabeçalho `If-Match` para controle de concorrência otimista —
+    em caso de divergência, a API responde com `412 Precondition Failed`.
+  version: 3.0.0
+  contact:
+    name: Equipe User & Group Service
+  license:
+    name: Uso Acadêmico
+servers:
+  - url: https://api.exemplo.com
+    description: Servidor de Produção
+  - url: http://localhost:8000
+    description: Servidor de Desenvolvimento Local
+tags:
+  - name: Grupo
+    description: Operações de criação, consulta, atualização e remoção de grupos.
+  - name: Membership
+    description: Gerenciamento da associação (membership) entre usuários e grupos.
+  - name: Usuário
+    description: Operações de consulta de usuários e seus grupos.
+security:
+  - serviceId: []
+    userContext: []
+paths:
+  /v1/group:
+    post:
+      tags: [Grupo]
+      summary: Cria um novo grupo
+      description: >-
+        Cria um novo grupo e devolve o recurso recém-criado. O cabeçalho
+        `Location` aponta para o endpoint de leitura do grupo.
+      operationId: createGroup
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/GroupCreateRequest'
+            examples:
+              exemploBasico:
+                summary: Criação simples
+                value:
+                  groupName: Turma de Engenharia de Software II
+                  description: Grupo destinado aos alunos da disciplina.
+      responses:
+        '201':
+          description: Grupo criado com sucesso.
+          headers:
+            Location:
+              description: URI do recurso recém-criado.
+              schema:
+                type: string
+                format: uri
+                example: /v1/group/42
+            ETag:
+              $ref: '#/components/headers/ETag'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Group'
+        '400':
+          $ref: '#/components/responses/RequisicaoInvalida'
+        '401':
+          $ref: '#/components/responses/NaoAutorizado'
+        '403':
+          $ref: '#/components/responses/Proibido'
+        '422':
+          $ref: '#/components/responses/EntidadeNaoProcessavel'
+        '429':
+          $ref: '#/components/responses/MuitasRequisicoes'
+        '500':
+          $ref: '#/components/responses/ErroInterno'
+
+    get:
+      tags: [Grupo]
+      summary: Lista os grupos
+      description: >-
+        Retorna a lista paginada de grupos. Suporta paginação (`page`,
+        `pageSize`), filtro por estado lógico (`active`) e busca textual
+        por nome (`search`).
+      operationId: listGroups
+      parameters:
+        - $ref: '#/components/parameters/PageQuery'
+        - $ref: '#/components/parameters/PageSizeQuery'
+        - $ref: '#/components/parameters/ActiveQuery'
+        - $ref: '#/components/parameters/SearchQuery'
+      responses:
+        '200':
+          description: Lista paginada de grupos.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/GroupListResponse'
+        '400':
+          $ref: '#/components/responses/RequisicaoInvalida'
+        '401':
+          $ref: '#/components/responses/NaoAutorizado'
+        '403':
+          $ref: '#/components/responses/Proibido'
+        '429':
+          $ref: '#/components/responses/MuitasRequisicoes'
+        '500':
+          $ref: '#/components/responses/ErroInterno'
+
+  /v1/group/{group-id}:
+    get:
+      tags: [Grupo]
+      summary: Consulta um grupo
+      description: Retorna as informações do grupo juntamente com os usuários inseridos nele.
+      operationId: readGroup
+      parameters:
+        - $ref: '#/components/parameters/GroupIdPath'
+      responses:
+        '200':
+          description: Informações do grupo e seus membros.
+          headers:
+            ETag:
+              $ref: '#/components/headers/ETag'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/GroupDetailResponse'
+        '401':
+          $ref: '#/components/responses/NaoAutorizado'
+        '403':
+          $ref: '#/components/responses/Proibido'
+        '404':
+          $ref: '#/components/responses/GrupoNaoEncontrado'
+        '410':
+          $ref: '#/components/responses/GrupoRemovido'
+        '500':
+          $ref: '#/components/responses/ErroInterno'
+
+    put:
+      tags: [Grupo]
+      summary: Atualiza um grupo
+      description: >-
+        Atualiza as informações (nome e/ou descrição) de um grupo existente.
+        Aceita o cabeçalho `If-Match` para controle de concorrência otimista.
+      operationId: updateGroup
+      parameters:
+        - $ref: '#/components/parameters/GroupIdPath'
+        - $ref: '#/components/parameters/IfMatchHeader'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/GroupUpdateRequest'
+      responses:
+        '200':
+          description: Grupo atualizado com sucesso.
+          headers:
+            ETag:
+              $ref: '#/components/headers/ETag'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Group'
+        '400':
+          $ref: '#/components/responses/RequisicaoInvalida'
+        '401':
+          $ref: '#/components/responses/NaoAutorizado'
+        '403':
+          $ref: '#/components/responses/Proibido'
+        '404':
+          $ref: '#/components/responses/GrupoNaoEncontrado'
+        '410':
+          $ref: '#/components/responses/GrupoRemovido'
+        '412':
+          $ref: '#/components/responses/PreCondicaoFalhou'
+        '422':
+          $ref: '#/components/responses/EntidadeNaoProcessavel'
+        '500':
+          $ref: '#/components/responses/ErroInterno'
+
+    delete:
+      tags: [Grupo]
+      summary: Remove um grupo (soft-delete)
+      description: >-
+        Realiza o *soft-delete* do grupo, marcando-o como inativo sem
+        removê-lo fisicamente do banco. Chamadas subsequentes em um grupo
+        já removido retornam `410 Gone`.
+      operationId: deleteGroup
+      parameters:
+        - $ref: '#/components/parameters/GroupIdPath'
+      responses:
+        '204':
+          description: Grupo removido (soft-delete) com sucesso.
+        '401':
+          $ref: '#/components/responses/NaoAutorizado'
+        '403':
+          $ref: '#/components/responses/Proibido'
+        '404':
+          $ref: '#/components/responses/GrupoNaoEncontrado'
+        '410':
+          $ref: '#/components/responses/GrupoRemovido'
+        '500':
+          $ref: '#/components/responses/ErroInterno'
+
+  /v1/group/{group-id}/user/{user-id}:
+    put:
+      tags: [Membership]
+      summary: Adiciona um usuário ao grupo
+      description: >-
+        Cria (ou confirma) a associação entre o usuário e o grupo. Operação
+        idempotente: retorna `201 Created` na primeira chamada e `200 OK`
+        nas chamadas subsequentes para uma associação já existente.
+      operationId: addUserToGroup
+      parameters:
+        - $ref: '#/components/parameters/GroupIdPath'
+        - $ref: '#/components/parameters/UserIdPath'
+      responses:
+        '200':
+          description: O usuário já era membro do grupo. Estado idempotente.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/UserGroup'
+        '201':
+          description: Usuário adicionado ao grupo com sucesso.
+          headers:
+            Location:
+              description: URI da associação recém-criada.
+              schema:
+                type: string
+                format: uri
+                example: /v1/group/42/user/1001
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/UserGroup'
+        '401':
+          $ref: '#/components/responses/NaoAutorizado'
+        '403':
+          $ref: '#/components/responses/Proibido'
+        '404':
+          description: Grupo ou usuário não encontrado.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Erro'
+              examples:
+                grupoInexistente:
+                  summary: Grupo não encontrado
+                  value:
+                    timestamp: '2026-05-30T10:15:00Z'
+                    status: 404
+                    error: Not Found
+                    errorCode: GROUP_NOT_FOUND
+                    message: Grupo com id 42 não encontrado.
+                    path: /v1/group/42/user/1001
+                usuarioInexistente:
+                  summary: Usuário não encontrado
+                  value:
+                    timestamp: '2026-05-30T10:15:00Z'
+                    status: 404
+                    error: Not Found
+                    errorCode: USER_NOT_FOUND
+                    message: Usuário com id 1001 não encontrado.
+                    path: /v1/group/42/user/1001
+        '410':
+          $ref: '#/components/responses/GrupoRemovido'
+        '500':
+          $ref: '#/components/responses/ErroInterno'
+
+    delete:
+      tags: [Membership]
+      summary: Remove um usuário do grupo
+      description: Remove a associação entre o usuário e o grupo.
+      operationId: removeUserFromGroup
+      parameters:
+        - $ref: '#/components/parameters/GroupIdPath'
+        - $ref: '#/components/parameters/UserIdPath'
+      responses:
+        '204':
+          description: Usuário removido do grupo com sucesso.
+        '401':
+          $ref: '#/components/responses/NaoAutorizado'
+        '403':
+          $ref: '#/components/responses/Proibido'
+        '404':
+          description: Grupo, usuário ou associação não encontrados.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Erro'
+              examples:
+                grupoInexistente:
+                  summary: Grupo não encontrado
+                  value:
+                    timestamp: '2026-05-30T10:15:00Z'
+                    status: 404
+                    error: Not Found
+                    errorCode: GROUP_NOT_FOUND
+                    message: Grupo com id 42 não encontrado.
+                    path: /v1/group/42/user/1001
+                membershipInexistente:
+                  summary: Associação não encontrada
+                  value:
+                    timestamp: '2026-05-30T10:15:00Z'
+                    status: 404
+                    error: Not Found
+                    errorCode: MEMBERSHIP_NOT_FOUND
+                    message: O usuário 1001 não pertence ao grupo 42.
+                    path: /v1/group/42/user/1001
+        '410':
+          $ref: '#/components/responses/GrupoRemovido'
+        '500':
+          $ref: '#/components/responses/ErroInterno'
+
+  /v1/user/{user-id}:
+    get:
+      tags: [Usuário]
+      summary: Consulta um usuário
+      description: >-
+        Retorna as informações do usuário juntamente com os grupos nos
+        quais ele está inserido.
+      operationId: readUser
+      parameters:
+        - $ref: '#/components/parameters/UserIdPath'
+      responses:
+        '200':
+          description: Informações do usuário e seus grupos.
+          headers:
+            ETag:
+              $ref: '#/components/headers/ETag'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/UserDetailResponse'
+        '401':
+          $ref: '#/components/responses/NaoAutorizado'
+        '403':
+          $ref: '#/components/responses/Proibido'
+        '404':
+          $ref: '#/components/responses/UsuarioNaoEncontrado'
+        '500':
+          $ref: '#/components/responses/ErroInterno'
+
+components:
+  securitySchemes:
+    serviceId:
+      type: apiKey
+      in: header
+      name: X-Service-Id
+      description: |
+        Identificador do serviço consumidor. Valores aceitos:
+
+        - `assessment-service` — Dependência Direta, acesso CRUD completo.
+        - `report-service` — Dependência de Leitura, acesso somente a GET.
+        - `survey-application` — Dependência de Leitura, acesso somente a GET.
+
+        Cabeçalhos com valores fora dessa lista são rejeitados com
+        `401 Unauthorized`. A confiança neste cabeçalho pressupõe mTLS no
+        transporte (service mesh).
+    userContext:
+      type: apiKey
+      in: header
+      name: X-User-Id
+      description: >-
+        Identidade do usuário final em nome de quem a operação é feita.
+        Propagado pelo serviço consumidor após validação do JWT emitido
+        pelo Autorizador no edge. Deve ser um inteiro positivo
+        correspondente a um `userId` válido.
+
+  headers:
+    ETag:
+      description: >-
+        Identificador opaco da versão do recurso, usado em conjunto com o
+        cabeçalho `If-Match` para concorrência otimista.
+      schema:
+        type: string
+        example: '"3-9a8d7c6b"'
+
+  parameters:
+    GroupIdPath:
+      name: group-id
+      in: path
+      required: true
+      description: Identificador único do grupo.
+      schema:
+        type: integer
+        format: int64
+        minimum: 1
+        example: 42
+    UserIdPath:
+      name: user-id
+      in: path
+      required: true
+      description: Identificador único do usuário.
+      schema:
+        type: integer
+        format: int64
+        minimum: 1
+        example: 1001
+    PageQuery:
+      name: page
+      in: query
+      required: false
+      description: Número da página solicitada (base 1).
+      schema:
+        type: integer
+        minimum: 1
+        default: 1
+        example: 1
+    PageSizeQuery:
+      name: pageSize
+      in: query
+      required: false
+      description: Quantidade de itens por página.
+      schema:
+        type: integer
+        minimum: 1
+        maximum: 100
+        default: 20
+        example: 20
+    ActiveQuery:
+      name: active
+      in: query
+      required: false
+      description: >-
+        Filtra grupos pelo estado lógico. `true` (padrão) retorna apenas
+        grupos ativos; `false` retorna apenas grupos removidos via
+        soft-delete; omitir o parâmetro retorna ambos.
+      schema:
+        type: boolean
+        example: true
+    SearchQuery:
+      name: search
+      in: query
+      required: false
+      description: Termo de busca textual aplicado a `groupName` (case-insensitive).
+      schema:
+        type: string
+        minLength: 1
+        maxLength: 100
+        example: Engenharia
+    IfMatchHeader:
+      name: If-Match
+      in: header
+      required: false
+      description: >-
+        Valor de `ETag` retornado na leitura anterior do recurso. Quando
+        informado e divergente da versão atual, a operação falha com
+        `412 Precondition Failed`.
+      schema:
+        type: string
+        example: '"3-9a8d7c6b"'
+
+  schemas:
+    Group:
+      type: object
+      description: Representação completa de um grupo.
+      properties:
+        groupId:
+          type: integer
+          format: int64
+          minimum: 1
+          readOnly: true
+          description: Identificador único do grupo.
+          example: 42
+        groupName:
+          type: string
+          minLength: 3
+          maxLength: 100
+          description: Nome do grupo.
+          example: Turma de Engenharia de Software II
+        description:
+          type: string
+          maxLength: 500
+          nullable: true
+          description: Descrição do grupo.
+          example: Grupo destinado aos alunos da disciplina.
+        active:
+          type: boolean
+          readOnly: true
+          description: >-
+            Indica se o grupo está ativo. `false` significa que o grupo foi
+            removido via soft-delete.
+          example: true
+        memberCount:
+          type: integer
+          minimum: 0
+          readOnly: true
+          description: Quantidade atual de usuários associados ao grupo.
+          example: 27
+        createdAt:
+          type: string
+          format: date-time
+          readOnly: true
+          description: Data e hora de criação do grupo (UTC).
+          example: '2026-03-05T09:00:00Z'
+        updatedAt:
+          type: string
+          format: date-time
+          readOnly: true
+          description: Data e hora da última atualização do grupo (UTC).
+          example: '2026-05-29T14:30:00Z'
+      required:
+        - groupId
+        - groupName
+        - active
+        - memberCount
+        - createdAt
+        - updatedAt
+
+    GroupSummary:
+      type: object
+      description: Versão resumida do grupo, utilizada em listagens.
+      properties:
+        groupId:
+          type: integer
+          format: int64
+          minimum: 1
+          example: 42
+        groupName:
+          type: string
+          example: Turma de Engenharia de Software II
+        description:
+          type: string
+          nullable: true
+          example: Grupo destinado aos alunos da disciplina.
+        memberCount:
+          type: integer
+          minimum: 0
+          example: 27
+        active:
+          type: boolean
+          example: true
+      required:
+        - groupId
+        - groupName
+        - memberCount
+        - active
+
+    User:
+      type: object
+      description: Representação de um usuário no contexto do User & Group Service.
+      properties:
+        userId:
+          type: integer
+          format: int64
+          minimum: 1
+          description: Identificador único do usuário.
+          example: 1001
+      required:
+        - userId
+
+    UserGroup:
+      type: object
+      description: Associação (membership) entre um usuário e um grupo.
+      properties:
+        userGroupId:
+          type: integer
+          format: int64
+          minimum: 1
+          readOnly: true
+          description: Identificador único da associação.
+          example: 5001
+        userId:
+          type: integer
+          format: int64
+          minimum: 1
+          description: Identificador do usuário associado.
+          example: 1001
+        groupId:
+          type: integer
+          format: int64
+          minimum: 1
+          description: Identificador do grupo associado.
+          example: 42
+        joinedAt:
+          type: string
+          format: date-time
+          readOnly: true
+          description: Data e hora em que o usuário ingressou no grupo (UTC).
+          example: '2026-05-29T14:30:00Z'
+      required:
+        - userGroupId
+        - userId
+        - groupId
+        - joinedAt
+
+    GroupCreateRequest:
+      type: object
+      description: Dados necessários para a criação de um grupo.
+      properties:
+        groupName:
+          type: string
+          minLength: 3
+          maxLength: 100
+          description: Nome do grupo.
+          example: Turma de Engenharia de Software II
+        description:
+          type: string
+          maxLength: 500
+          nullable: true
+          description: Descrição do grupo.
+          example: Grupo destinado aos alunos da disciplina.
+      required:
+        - groupName
+      additionalProperties: false
+
+    GroupUpdateRequest:
+      type: object
+      description: >-
+        Dados passíveis de atualização em um grupo. Pelo menos um dos campos
+        deve ser informado.
+      properties:
+        groupName:
+          type: string
+          minLength: 3
+          maxLength: 100
+          description: Novo nome do grupo.
+          example: Turma de Engenharia de Software II - 2026/1
+        description:
+          type: string
+          maxLength: 500
+          nullable: true
+          description: Nova descrição do grupo.
+          example: Grupo atualizado da disciplina.
+      minProperties: 1
+      additionalProperties: false
+
+    PaginationMeta:
+      type: object
+      description: Metadados de paginação aplicáveis a respostas em lista.
+      properties:
+        page:
+          type: integer
+          minimum: 1
+          description: Página atual (base 1).
+          example: 1
+        pageSize:
+          type: integer
+          minimum: 1
+          description: Quantidade de itens por página.
+          example: 20
+        totalItems:
+          type: integer
+          minimum: 0
+          description: Quantidade total de itens disponíveis na consulta.
+          example: 47
+        totalPages:
+          type: integer
+          minimum: 0
+          description: Quantidade total de páginas.
+          example: 3
+      required:
+        - page
+        - pageSize
+        - totalItems
+        - totalPages
+
+    GroupListResponse:
+      type: object
+      description: Lista paginada de grupos.
+      properties:
+        items:
+          type: array
+          description: Coleção de grupos da página corrente.
+          items:
+            $ref: '#/components/schemas/GroupSummary'
+        meta:
+          $ref: '#/components/schemas/PaginationMeta'
+      required:
+        - items
+        - meta
+
+    GroupDetailResponse:
+      type: object
+      description: Informações completas do grupo acrescidas dos usuários nele inseridos.
+      allOf:
+        - $ref: '#/components/schemas/Group'
+        - type: object
+          properties:
+            users:
+              type: array
+              description: Lista de usuários pertencentes ao grupo.
+              items:
+                $ref: '#/components/schemas/User'
+          required:
+            - users
+
+    UserDetailResponse:
+      type: object
+      description: Informações do usuário acrescidas dos grupos aos quais pertence.
+      allOf:
+        - $ref: '#/components/schemas/User'
+        - type: object
+          properties:
+            groups:
+              type: array
+              description: Lista de grupos aos quais o usuário pertence.
+              items:
+                $ref: '#/components/schemas/GroupSummary'
+          required:
+            - groups
+
+    ErroDetalhe:
+      type: object
+      description: Detalhe de erro para um campo específico em validações de payload.
+      properties:
+        field:
+          type: string
+          description: Caminho do campo que falhou (notação por ponto).
+          example: groupName
+        code:
+          type: string
+          description: Código aplicacional do erro do campo.
+          example: VALUE_TOO_SHORT
+        message:
+          type: string
+          description: Mensagem descritiva do erro do campo.
+          example: O nome do grupo deve ter ao menos 3 caracteres.
+      required:
+        - field
+        - code
+        - message
+
+    Erro:
+      type: object
+      description: >-
+        Estrutura padrão de erro, inspirada na RFC 7807. Inclui o instante
+        do erro, o status HTTP, um código aplicacional estável, mensagem
+        descritiva, caminho da requisição e, quando aplicável, lista de
+        detalhes por campo.
+      properties:
+        timestamp:
+          type: string
+          format: date-time
+          description: Instante em que o erro foi gerado (UTC).
+          example: '2026-05-30T10:15:00Z'
+        status:
+          type: integer
+          description: Código HTTP do erro.
+          example: 404
+        error:
+          type: string
+          description: Texto padrão associado ao código HTTP.
+          example: Not Found
+        errorCode:
+          type: string
+          description: >-
+            Código aplicacional do erro, estável e adequado para tratamento
+            programático pelos clientes (ex.: `GROUP_NOT_FOUND`).
+          example: GROUP_NOT_FOUND
+        message:
+          type: string
+          description: Mensagem descritiva voltada a desenvolvedores.
+          example: Grupo com id 42 não encontrado.
+        path:
+          type: string
+          description: Caminho da requisição que originou o erro.
+          example: /v1/group/42
+        details:
+          type: array
+          description: Lista de detalhes por campo (presente em erros de validação).
+          items:
+            $ref: '#/components/schemas/ErroDetalhe'
+      required:
+        - timestamp
+        - status
+        - error
+        - errorCode
+        - message
+        - path
+
+  responses:
+    RequisicaoInvalida:
+      description: >-
+        Requisição inválida — JSON malformado, parâmetros ausentes ou
+        com tipo incompatível.
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Erro'
+          example:
+            timestamp: '2026-05-30T10:15:00Z'
+            status: 400
+            error: Bad Request
+            errorCode: MALFORMED_REQUEST
+            message: O corpo da requisição não é um JSON válido.
+            path: /v1/group
+
+    NaoAutorizado:
+      description: >-
+        Falha de autenticação — `X-Service-Id` ausente/desconhecido ou
+        `X-User-Id` ausente/malformado.
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Erro'
+          examples:
+            servicoDesconhecido:
+              summary: X-Service-Id desconhecido
+              value:
+                timestamp: '2026-05-30T10:15:00Z'
+                status: 401
+                error: Unauthorized
+                errorCode: UNKNOWN_SERVICE
+                message: O serviço informado em X-Service-Id não está autorizado a consumir esta API.
+                path: /v1/group
+            cabecalhoAusente:
+              summary: Cabeçalho obrigatório ausente
+              value:
+                timestamp: '2026-05-30T10:15:00Z'
+                status: 401
+                error: Unauthorized
+                errorCode: AUTHENTICATION_REQUIRED
+                message: Cabeçalho X-User-Id ausente.
+                path: /v1/group
+
+    Proibido:
+      description: >-
+        O serviço chamador não possui permissão para a operação solicitada
+        (ex.: serviço somente-leitura tentando `POST`/`PUT`/`DELETE`).
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Erro'
+          example:
+            timestamp: '2026-05-30T10:15:00Z'
+            status: 403
+            error: Forbidden
+            errorCode: READ_ONLY_SERVICE
+            message: O serviço report-service possui acesso somente de leitura.
+            path: /v1/group/42
+
+    GrupoNaoEncontrado:
+      description: Grupo não encontrado.
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Erro'
+          example:
+            timestamp: '2026-05-30T10:15:00Z'
+            status: 404
+            error: Not Found
+            errorCode: GROUP_NOT_FOUND
+            message: Grupo com id 42 não encontrado.
+            path: /v1/group/42
+
+    UsuarioNaoEncontrado:
+      description: Usuário não encontrado.
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Erro'
+          example:
+            timestamp: '2026-05-30T10:15:00Z'
+            status: 404
+            error: Not Found
+            errorCode: USER_NOT_FOUND
+            message: Usuário com id 1001 não encontrado.
+            path: /v1/user/1001
+
+    GrupoRemovido:
+      description: >-
+        O grupo existe, mas foi removido via soft-delete e não aceita mais
+        operações de leitura ou escrita.
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Erro'
+          example:
+            timestamp: '2026-05-30T10:15:00Z'
+            status: 410
+            error: Gone
+            errorCode: GROUP_DELETED
+            message: O grupo 42 foi removido e não está mais disponível.
+            path: /v1/group/42
+
+    PreCondicaoFalhou:
+      description: >-
+        O cabeçalho `If-Match` foi informado, mas o `ETag` enviado não
+        corresponde à versão atual do recurso.
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Erro'
+          example:
+            timestamp: '2026-05-30T10:15:00Z'
+            status: 412
+            error: Precondition Failed
+            errorCode: STALE_RESOURCE_VERSION
+            message: A versão informada em If-Match não corresponde à versão atual do recurso.
+            path: /v1/group/42
+
+    EntidadeNaoProcessavel:
+      description: >-
+        Requisição sintaticamente válida, porém com falhas de validação
+        semântica. O campo `details` enumera os campos problemáticos.
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Erro'
+          example:
+            timestamp: '2026-05-30T10:15:00Z'
+            status: 422
+            error: Unprocessable Entity
+            errorCode: VALIDATION_FAILED
+            message: A requisição não passou na validação de campos.
+            path: /v1/group
+            details:
+              - field: groupName
+                code: VALUE_TOO_SHORT
+                message: O nome do grupo deve ter ao menos 3 caracteres.
+
+    MuitasRequisicoes:
+      description: Limite de requisições excedido.
+      headers:
+        Retry-After:
+          description: Número de segundos a aguardar antes de uma nova tentativa.
+          schema:
+            type: integer
+            example: 30
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Erro'
+          example:
+            timestamp: '2026-05-30T10:15:00Z'
+            status: 429
+            error: Too Many Requests
+            errorCode: RATE_LIMIT_EXCEEDED
+            message: Limite de requisições excedido. Tente novamente em alguns instantes.
+            path: /v1/group
+
+    ErroInterno:
+      description: Erro inesperado no servidor.
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Erro'
+          example:
+            timestamp: '2026-05-30T10:15:00Z'
+            status: 500
+            error: Internal Server Error
+            errorCode: INTERNAL_ERROR
+            message: Ocorreu um erro inesperado ao processar a requisição.
+            path: /v1/group
