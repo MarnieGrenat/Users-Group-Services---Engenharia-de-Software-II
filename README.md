@@ -1,5 +1,5 @@
 # User & Group Services - Engenharia de Software II
-**Autores**: Gabriela Dellamora Paim, [ Colocar resto da equipe ]
+**Autores**: Gabriela Dellamora Paim, Eduarda Floripo, Gabriel Botega, Giancarlo Brandalise e Maria Eduarda Ourique
 
 **Swagger**: colar conteúdo do arquivo [openapi](./openapi.yaml) no [editor de swagger](https://editor.swagger.io)
 
