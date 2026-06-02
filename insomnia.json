@@ -1,0 +1,181 @@
+{
+  "_type": "export",
+  "__export_format": 4,
+  "__export_date": "2026-06-02T00:00:00.000Z",
+  "__export_source": "insomnia.desktop.app:v9",
+  "resources": [
+    {
+      "_id": "wrk_ug_service",
+      "_type": "workspace",
+      "parentId": null,
+      "name": "User & Group Service",
+      "description": "Coleção de requests para testar a API local (ver openapi.yaml).",
+      "scope": "collection"
+    },
+    {
+      "_id": "env_base",
+      "_type": "environment",
+      "parentId": "wrk_ug_service",
+      "name": "Base Environment",
+      "data": {
+        "base_url": "http://localhost:8000",
+        "service_id": "assessment-service",
+        "user_id": "1001",
+        "group_id": "1"
+      },
+      "metaSortKey": 1
+    },
+    {
+      "_id": "env_report",
+      "_type": "environment",
+      "parentId": "env_base",
+      "name": "Report Service (somente leitura)",
+      "data": {
+        "service_id": "report-service"
+      },
+      "metaSortKey": 2
+    },
+    {
+      "_id": "fld_grupo",
+      "_type": "request_group",
+      "parentId": "wrk_ug_service",
+      "name": "Grupo",
+      "metaSortKey": 100
+    },
+    {
+      "_id": "fld_membership",
+      "_type": "request_group",
+      "parentId": "wrk_ug_service",
+      "name": "Membership",
+      "metaSortKey": 200
+    },
+    {
+      "_id": "fld_usuario",
+      "_type": "request_group",
+      "parentId": "wrk_ug_service",
+      "name": "Usuário",
+      "metaSortKey": 300
+    },
+    {
+      "_id": "req_group_create",
+      "_type": "request",
+      "parentId": "fld_grupo",
+      "name": "Cria grupo (POST /v1/group)",
+      "method": "POST",
+      "url": "{{ _.base_url }}/v1/group",
+      "body": {
+        "mimeType": "application/json",
+        "text": "{\n  \"groupName\": \"Turma de Engenharia de Software II\",\n  \"description\": \"Grupo destinado aos alunos da disciplina.\"\n}"
+      },
+      "headers": [
+        { "name": "Content-Type", "value": "application/json" },
+        { "name": "X-Service-Id", "value": "{{ _.service_id }}" },
+        { "name": "X-User-Id", "value": "{{ _.user_id }}" }
+      ],
+      "metaSortKey": 110
+    },
+    {
+      "_id": "req_group_list",
+      "_type": "request",
+      "parentId": "fld_grupo",
+      "name": "Lista grupos (GET /v1/group)",
+      "method": "GET",
+      "url": "{{ _.base_url }}/v1/group",
+      "parameters": [
+        { "name": "page", "value": "1" },
+        { "name": "pageSize", "value": "20" },
+        { "name": "active", "value": "true" },
+        { "name": "search", "value": "Engenharia", "disabled": true }
+      ],
+      "headers": [
+        { "name": "X-Service-Id", "value": "{{ _.service_id }}" },
+        { "name": "X-User-Id", "value": "{{ _.user_id }}" }
+      ],
+      "metaSortKey": 120
+    },
+    {
+      "_id": "req_group_get",
+      "_type": "request",
+      "parentId": "fld_grupo",
+      "name": "Consulta grupo (GET /v1/group/{id})",
+      "method": "GET",
+      "url": "{{ _.base_url }}/v1/group/{{ _.group_id }}",
+      "headers": [
+        { "name": "X-Service-Id", "value": "{{ _.service_id }}" },
+        { "name": "X-User-Id", "value": "{{ _.user_id }}" }
+      ],
+      "metaSortKey": 130
+    },
+    {
+      "_id": "req_group_update",
+      "_type": "request",
+      "parentId": "fld_grupo",
+      "name": "Atualiza grupo (PUT /v1/group/{id})",
+      "method": "PUT",
+      "url": "{{ _.base_url }}/v1/group/{{ _.group_id }}",
+      "body": {
+        "mimeType": "application/json",
+        "text": "{\n  \"groupName\": \"Turma de Engenharia de Software II - 2026/1\",\n  \"description\": \"Grupo atualizado da disciplina.\"\n}"
+      },
+      "headers": [
+        { "name": "Content-Type", "value": "application/json" },
+        { "name": "X-Service-Id", "value": "{{ _.service_id }}" },
+        { "name": "X-User-Id", "value": "{{ _.user_id }}" },
+        { "name": "If-Match", "value": "\"1-xxxxxxxx\"", "disabled": true }
+      ],
+      "metaSortKey": 140
+    },
+    {
+      "_id": "req_group_delete",
+      "_type": "request",
+      "parentId": "fld_grupo",
+      "name": "Remove grupo - soft delete (DELETE /v1/group/{id})",
+      "method": "DELETE",
+      "url": "{{ _.base_url }}/v1/group/{{ _.group_id }}",
+      "headers": [
+        { "name": "X-Service-Id", "value": "{{ _.service_id }}" },
+        { "name": "X-User-Id", "value": "{{ _.user_id }}" }
+      ],
+      "metaSortKey": 150
+    },
+    {
+      "_id": "req_member_add",
+      "_type": "request",
+      "parentId": "fld_membership",
+      "name": "Adiciona usuário ao grupo (PUT /v1/group/{id}/user/{uid})",
+      "method": "PUT",
+      "url": "{{ _.base_url }}/v1/group/{{ _.group_id }}/user/{{ _.user_id }}",
+      "headers": [
+        { "name": "X-Service-Id", "value": "{{ _.service_id }}" },
+        { "name": "X-User-Id", "value": "{{ _.user_id }}" }
+      ],
+      "metaSortKey": 210
+    },
+    {
+      "_id": "req_member_remove",
+      "_type": "request",
+      "parentId": "fld_membership",
+      "name": "Remove usuário do grupo (DELETE /v1/group/{id}/user/{uid})",
+      "method": "DELETE",
+      "url": "{{ _.base_url }}/v1/group/{{ _.group_id }}/user/{{ _.user_id }}",
+      "headers": [
+        { "name": "X-Service-Id", "value": "{{ _.service_id }}" },
+        { "name": "X-User-Id", "value": "{{ _.user_id }}" }
+      ],
+      "metaSortKey": 220
+    },
+    {
+      "_id": "req_user_get",
+      "_type": "request",
+      "parentId": "fld_usuario",
+      "name": "Consulta usuário (GET /v1/user/{uid})",
+      "method": "GET",
+      "url": "{{ _.base_url }}/v1/user/{{ _.user_id }}",
+      "headers": [
+        { "name": "X-Service-Id", "value": "{{ _.service_id }}" },
+        { "name": "X-User-Id", "value": "{{ _.user_id }}" }
+      ],
+      "metaSortKey": 310
+    }
+  ]
+}
