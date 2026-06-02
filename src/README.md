@@ -8,21 +8,25 @@ camada apenas autentica/autoriza, valida payloads e chama as funções `sp_*`.
 
 ```
 src/
-  main.py                # entrypoint (cria o app, bind em loopback)
+  main.py                # entrypoint + declaração dos endpoints (injeção de dependência)
   app/
+    __init__.py          # create_app(): ciclo de vida + tratadores de erro
     config.py            # settings via variáveis de ambiente (UG_*)
-    db.py                # pool de conexões + chamada parametrizada das sp_*
+    db.py                # Database (executor parametrizado) + get_database (Depends)
     errors.py            # ServiceError, mapeamento SQLSTATE -> Erro (RFC 7807)
     security.py          # autenticação (X-Service-Id/X-User-Id) e autorização
     schemas.py           # modelos Pydantic (camelCase) espelhando o contrato
     etags.py             # If-Match -> versão; ETag de usuário
-    services/            # uma função por stored procedure
+    services/            # GroupService / UserService (injetam o Database)
       groups.py
       users.py
-    api/                 # rotas HTTP
-      groups.py
-      users.py
+  tests/                 # suíte pytest (sobe um PostgreSQL efêmero)
 ```
+
+As rotas são declaradas em `main.py` sobre o app criado por `create_app()`.
+Tudo é resolvido por **injeção de dependência** (`Depends`): segurança
+(`authenticate`/`require_write`) e serviços (`GroupService`/`UserService`, que
+por sua vez recebem o `Database`). Isso mantém os handlers finos e testáveis.
 
 ## Executando
 
@@ -32,6 +36,16 @@ cp .env.example .env          # ajuste UG_DATABASE_URL
 # aplique as migrações de ../db antes (V001, V002)
 python main.py                # ou: uvicorn main:app
 ```
+
+## Testes
+
+```bash
+pip install -r requirements-dev.txt
+pytest                        # sobe um PostgreSQL temporário e aplica as migrações
+```
+
+A suíte é ignorada (skip) caso as ferramentas do PostgreSQL não estejam
+instaladas no ambiente.
 
 ## Segurança — decisões de projeto
 

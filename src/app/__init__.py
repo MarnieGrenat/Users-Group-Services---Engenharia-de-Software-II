@@ -14,8 +14,6 @@ from fastapi import FastAPI, Request
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
 
-from .api.groups import router as groups_router
-from .api.users import router as users_router
 from .config import get_settings
 from .db import close_pool, init_pool
 from .errors import ServiceError, build_error_body
@@ -24,6 +22,10 @@ log = logging.getLogger("user_group_service")
 
 
 def create_app() -> FastAPI:
+    """Cria o app com ciclo de vida e tratadores de erro.
+
+    As rotas são declaradas em `main.py` sobre a instância retornada aqui.
+    """
     settings = get_settings()
 
     @asynccontextmanager
@@ -35,8 +37,6 @@ def create_app() -> FastAPI:
             close_pool()
 
     app = FastAPI(title=settings.app_name, version="3.0.0", lifespan=lifespan)
-    app.include_router(groups_router, prefix="/v1")
-    app.include_router(users_router, prefix="/v1")
     _register_error_handlers(app)
     return app
 

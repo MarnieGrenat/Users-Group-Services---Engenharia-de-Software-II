@@ -7,6 +7,9 @@ Toda interação com o banco passa por aqui. Regras de segurança:
 * **statement_timeout**: cada conexão limita o tempo de execução de queries.
 * **Tradução de erros**: falhas do banco viram `ServiceError` — nada de
   stack trace ou detalhe interno vaza para o chamador.
+
+O `Database` é injetado nas rotas via `get_database` (Depends), permitindo
+substituí-lo facilmente em testes.
 """
 
 from __future__ import annotations
@@ -60,23 +63,30 @@ def _connection() -> Iterator[psycopg.Connection]:
         yield conn
 
 
-def call(function_sql: str, params: Sequence[Any]) -> list[dict[str, Any]]:
-    """Executa uma chamada de stored procedure e devolve todas as linhas.
+class Database:
+    """Executor de stored procedures sobre o pool de conexões."""
 
-    `function_sql` deve usar placeholders `%s` para todos os argumentos.
-    """
-    try:
-        with _connection() as conn, conn.cursor() as cur:
-            cur.execute(function_sql, params)
-            if cur.description is None:  # função RETURNS VOID
-                return []
-            return cur.fetchall()
-    except psycopg.Error as exc:
-        # Converte SQLSTATE de regra de negócio em erro de domínio.
-        raise translate_db_error(exc) from exc
+    def call(self, function_sql: str, params: Sequence[Any]) -> list[dict[str, Any]]:
+        """Executa uma chamada de stored procedure e devolve todas as linhas.
+
+        `function_sql` deve usar placeholders `%s` para todos os argumentos.
+        """
+        try:
+            with _connection() as conn, conn.cursor() as cur:
+                cur.execute(function_sql, params)
+                if cur.description is None:  # função RETURNS VOID
+                    return []
+                return cur.fetchall()
+        except psycopg.Error as exc:
+            # Converte SQLSTATE de regra de negócio em erro de domínio.
+            raise translate_db_error(exc) from exc
+
+    def call_one(self, function_sql: str, params: Sequence[Any]) -> dict[str, Any] | None:
+        """Igual a `call`, mas retorna a primeira linha (ou None)."""
+        rows = self.call(function_sql, params)
+        return rows[0] if rows else None
 
 
-def call_one(function_sql: str, params: Sequence[Any]) -> dict[str, Any] | None:
-    """Igual a `call`, mas retorna a primeira linha (ou None)."""
-    rows = call(function_sql, params)
-    return rows[0] if rows else None
+def get_database() -> Database:
+    """Dependência FastAPI: fornece um executor de banco por requisição."""
+    return Database()
