@@ -1,0 +1,36 @@
+name: user-group-service
+
+services:
+  db:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: ug
+      POSTGRES_PASSWORD: ug_dev_password   # apenas desenvolvimento — não usar em produção
+      POSTGRES_DB: ugdb
+    ports:
+      - "5432:5432"
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+      # Migrações aplicadas automaticamente na 1ª inicialização (ordem por nome:
+      # V001 antes de V002). Use `./dev.sh reset` para reaplicá-las do zero.
+      - ./db/migrations:/docker-entrypoint-initdb.d:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ug -d ugdb"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  api:
+    build:
+      context: .
+      target: runtime
+    environment:
+      UG_DATABASE_URL: postgresql://ug:ug_dev_password@db:5432/ugdb
+    ports:
+      - "8000:8000"
+    depends_on:
+      db:
+        condition: service_healthy   # só sobe após o banco estar pronto (migrações aplicadas)
+
+volumes:
+  pgdata:

@@ -11,6 +11,24 @@
 **Dependência Direta**:
 - Assessment Service
 ---
+## Ambiente de Desenvolvimento (Docker)
+O projeto roda em Docker via `docker-compose.yml` (API + PostgreSQL) e é gerenciado
+pelo script [`dev.sh`](./dev.sh). As migrações de [`db/`](./db) são aplicadas
+automaticamente na primeira inicialização do banco.
+
+```bash
+./dev.sh up        # sobe api + db (API em http://localhost:8000, docs em /docs)
+./dev.sh logs      # acompanha os logs da api
+./dev.sh test      # roda a suíte pytest em um container
+./dev.sh psql      # abre o psql no banco
+./dev.sh reset     # recria o banco do zero (reaplica as migrações)
+./dev.sh down      # para o stack
+./dev.sh help      # lista todos os comandos
+```
+
+> As credenciais no `docker-compose.yml` são apenas para desenvolvimento.
+
+---
 ## Arquitetura:
 - Python
 - API REST
