@@ -40,7 +40,8 @@ def init_pool() -> None:
         max_size=settings.db_pool_max_size,
         kwargs={
             "row_factory": dict_row,
-            "options": f"-c statement_timeout={settings.db_statement_timeout_ms}",
+            # timezone=UTC: TIMESTAMPTZ retorna sempre em UTC, conforme o contrato.
+            "options": f"-c statement_timeout={settings.db_statement_timeout_ms} -c timezone=UTC",
         },
         open=True,
     )

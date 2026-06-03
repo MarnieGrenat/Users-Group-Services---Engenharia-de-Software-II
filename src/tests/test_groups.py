@@ -39,6 +39,22 @@ def test_create_group_validation(client, write_headers, payload):
     assert resp.json()["errorCode"] == "VALIDATION_FAILED"
 
 
+def test_malformed_json_returns_400(client, write_headers):
+    resp = client.post(
+        "/v1/group",
+        headers={**write_headers, "Content-Type": "application/json"},
+        content="{not valid json",
+    )
+    assert resp.status_code == 400
+    assert resp.json()["errorCode"] == "MALFORMED_REQUEST"
+    assert "details" not in resp.json()  # 400 não carrega details[]
+
+
+def test_invalid_query_param_returns_400(client, read_headers):
+    assert client.get("/v1/group", params={"pageSize": "abc"}, headers=read_headers).status_code == 400
+    assert client.get("/v1/group", params={"pageSize": "500"}, headers=read_headers).status_code == 400
+
+
 def test_membership_is_idempotent(client, write_headers):
     gid = _create_group(client, write_headers).json()["groupId"]
 
@@ -134,3 +150,17 @@ def test_group_not_found(client, read_headers):
     resp = client.get("/v1/group/99999", headers=read_headers)
     assert resp.status_code == 404
     assert resp.json()["errorCode"] == "GROUP_NOT_FOUND"
+
+
+def test_datetimes_are_utc_with_z_suffix(client, write_headers):
+    """O contrato exige date-times em UTC com sufixo 'Z' (ex.: ...T09:00:00Z)."""
+    body = _create_group(client, write_headers).json()
+    assert body["createdAt"].endswith("Z")
+    assert body["updatedAt"].endswith("Z")
+    # Não deve vazar offset de fuso local (ex.: -03:00).
+    assert "+" not in body["createdAt"]
+
+    membership = client.put(
+        f"/v1/group/{body['groupId']}/user/1001", headers=write_headers
+    ).json()
+    assert membership["joinedAt"].endswith("Z")

@@ -57,14 +57,29 @@ def _register_error_handlers(app: FastAPI) -> None:
     async def _handle_validation_error(
         request: Request, exc: RequestValidationError
     ) -> JSONResponse:
-        body = build_error_body(
-            status=422,
-            error_code="VALIDATION_FAILED",
-            message="A requisição não passou na validação de campos.",
-            path=request.url.path,
-            details=_to_error_details(exc),
+        errors = exc.errors()
+        # JSON ilegível ou parâmetros inválidos -> 400 MALFORMED_REQUEST (sem details).
+        if _is_malformed_request(errors):
+            return JSONResponse(
+                status_code=400,
+                content=build_error_body(
+                    status=400,
+                    error_code="MALFORMED_REQUEST",
+                    message="A requisição é inválida ou está malformada.",
+                    path=request.url.path,
+                ),
+            )
+        # Corpo legível, mas com falhas semânticas de campo -> 422 com details[].
+        return JSONResponse(
+            status_code=422,
+            content=build_error_body(
+                status=422,
+                error_code="VALIDATION_FAILED",
+                message="A requisição não passou na validação de campos.",
+                path=request.url.path,
+                details=_to_error_details(errors),
+            ),
         )
-        return JSONResponse(status_code=422, content=body)
 
     @app.exception_handler(Exception)
     async def _handle_unexpected(request: Request, exc: Exception) -> JSONResponse:
@@ -79,15 +94,25 @@ def _register_error_handlers(app: FastAPI) -> None:
         return JSONResponse(status_code=500, content=body)
 
 
-def _to_error_details(exc: RequestValidationError) -> list[dict[str, str]]:
-    """Converte os erros de validação do Pydantic em `Erro.details`."""
-    _IGNORED_LOC = {"body", "query", "path", "header"}
+def _is_malformed_request(errors: list[dict]) -> bool:
+    """True se o corpo é um JSON ilegível ou há parâmetro inválido (-> 400)."""
+    for error in errors:
+        if error["type"] == "json_invalid":
+            return True
+        loc = error["loc"]
+        if loc and loc[0] in ("query", "path", "header"):
+            return True
+    return False
+
+
+def _to_error_details(errors: list[dict]) -> list[dict[str, str]]:
+    """Converte erros de validação de corpo do Pydantic em `Erro.details`."""
     details: list[dict[str, str]] = []
-    for error in exc.errors():
-        field_parts = [str(part) for part in error["loc"] if part not in _IGNORED_LOC]
+    for error in errors:
+        field_parts = [str(part) for part in error["loc"] if part != "body"]
         details.append(
             {
-                "field": ".".join(field_parts) or str(error["loc"][-1]),
+                "field": ".".join(field_parts) or "body",
                 "code": error["type"].upper(),
                 "message": error["msg"],
             }

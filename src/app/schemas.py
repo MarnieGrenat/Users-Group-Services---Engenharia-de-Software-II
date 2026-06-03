@@ -12,10 +12,22 @@ Convenções:
 
 from __future__ import annotations
 
-from datetime import datetime
+from datetime import datetime, timezone
+from typing import Annotated
 
-from pydantic import BaseModel, ConfigDict, Field, model_validator
+from pydantic import BaseModel, ConfigDict, Field, PlainSerializer, model_validator
 from pydantic.alias_generators import to_camel
+
+# Datas no contrato são UTC com sufixo "Z" (ex.: "2026-03-05T09:00:00Z").
+# Normalizamos qualquer datetime para UTC nesse formato, independente do fuso
+# de origem do banco/servidor.
+UtcDateTime = Annotated[
+    datetime,
+    PlainSerializer(
+        lambda dt: dt.astimezone(timezone.utc).isoformat().replace("+00:00", "Z"),
+        return_type=str,
+    ),
+]
 
 
 class _RequestModel(BaseModel):
@@ -63,8 +75,8 @@ class Group(_ResponseModel):
     description: str | None = None
     active: bool
     member_count: int
-    created_at: datetime
-    updated_at: datetime
+    created_at: UtcDateTime
+    updated_at: UtcDateTime
 
 
 class User(_ResponseModel):
@@ -75,7 +87,7 @@ class UserGroup(_ResponseModel):
     user_group_id: int
     user_id: int
     group_id: int
-    joined_at: datetime
+    joined_at: UtcDateTime
 
 
 class PaginationMeta(_ResponseModel):
