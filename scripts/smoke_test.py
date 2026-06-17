@@ -29,6 +29,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import random
 import sys
 import urllib.error
@@ -38,6 +39,31 @@ from typing import Any
 # Serviços da allowlist (ver app/security.py).
 WRITE_SERVICE = "assessment-service"  # permissão de escrita
 READ_SERVICE = "report-service"       # somente leitura
+
+
+class C:
+    """Códigos ANSI de cor. Desligados se a saída não for um TTY, se NO_COLOR
+    estiver definido, ou via --no-color (ver _disable)."""
+
+    GREEN = "\033[32m"
+    RED = "\033[31m"
+    YELLOW = "\033[33m"
+    CYAN = "\033[36m"
+    GREY = "\033[90m"
+    BOLD = "\033[1m"
+    DIM = "\033[2m"
+    RESET = "\033[0m"
+
+    @classmethod
+    def _disable(cls) -> None:
+        for name in ("GREEN", "RED", "YELLOW", "CYAN", "GREY", "BOLD", "DIM", "RESET"):
+            setattr(cls, name, "")
+
+
+def paint(text: str, *styles: str) -> str:
+    """Envolve `text` nos estilos dados (no-op se as cores estiverem off)."""
+    prefix = "".join(styles)
+    return f"{prefix}{text}{C.RESET}" if prefix else text
 
 
 class Client:
@@ -80,8 +106,8 @@ class Client:
         except urllib.error.HTTPError as exc:
             status, raw, hdrs = exc.code, exc.read(), exc.headers
         except urllib.error.URLError as exc:
-            print(f"\n✗ Não foi possível conectar a {url}: {exc.reason}")
-            print("  O serviço está no ar? Tente: ./dev.sh up")
+            print(paint(f"\n✗ Não foi possível conectar a {url}: {exc.reason}", C.RED, C.BOLD))
+            print(paint("  O serviço está no ar? Tente: ./dev.sh up", C.GREY))
             sys.exit(2)
 
         parsed: Any
@@ -91,9 +117,10 @@ class Client:
             parsed = raw.decode(errors="replace")
 
         if self.verbose:
-            print(f"    → {method} {path} [{status}]")
+            print(paint(f"    → {method} {path} [{status}]", C.DIM, C.CYAN))
             if parsed is not None:
-                print(f"      {json.dumps(parsed, ensure_ascii=False)[:200]}")
+                snippet = json.dumps(parsed, ensure_ascii=False)[:200]
+                print(paint(f"      {snippet}", C.GREY))
         return status, hdrs, parsed
 
 
@@ -105,10 +132,13 @@ class Runner:
         self.failed = 0
 
     def check(self, label: str, ok: bool, detail: str = "") -> bool:
-        mark = "✓" if ok else "✗"
+        if ok:
+            mark = paint("✓", C.GREEN, C.BOLD)
+        else:
+            mark = paint("✗", C.RED, C.BOLD)
         line = f"  {mark} {label}"
         if not ok and detail:
-            line += f"  — {detail}"
+            line += paint(f"  — {detail}", C.YELLOW)
         print(line)
         if ok:
             self.passed += 1
@@ -118,7 +148,13 @@ class Runner:
 
     def summary(self) -> int:
         total = self.passed + self.failed
-        print(f"\n{self.passed}/{total} verificações passaram.")
+        if self.failed == 0:
+            bar = paint(f"  {self.passed}/{total} verificações passaram ✨ ", C.GREEN, C.BOLD)
+        else:
+            bar = paint(f"  {self.passed}/{total} passaram, "
+                        f"{self.failed} falharam ", C.RED, C.BOLD)
+        rule = paint("─" * 44, C.GREY)
+        print(f"\n{rule}\n{bar}\n{rule}")
         return 0 if self.failed == 0 else 1
 
 
@@ -128,7 +164,13 @@ def main() -> int:
                         help="URL base do serviço (padrão: http://localhost:8000).")
     parser.add_argument("-v", "--verbose", action="store_true",
                         help="Mostra cada requisição/resposta.")
+    parser.add_argument("--no-color", action="store_true",
+                        help="Desliga as cores ANSI.")
     args = parser.parse_args()
+
+    # Cores: respeitam NO_COLOR, --no-color e saída sem TTY (ex.: pipe/CI).
+    if args.no_color or os.environ.get("NO_COLOR") or not sys.stdout.isatty():
+        C._disable()
 
     c = Client(args.base_url, args.verbose)
     r = Runner()
@@ -139,7 +181,8 @@ def main() -> int:
     user_id = random.randint(100_000, 999_999)
 
     group_id: int | None = None
-    print(f"Alvo: {c.base_url}\n")
+    print(paint("╭─ smoke test ─ User & Group Service", C.BOLD, C.CYAN))
+    print(paint(f"╰─ alvo: {c.base_url}", C.GREY) + "\n")
 
     # 1. POST /v1/group --------------------------------------------------------
     status, hdrs, body = c.request(
